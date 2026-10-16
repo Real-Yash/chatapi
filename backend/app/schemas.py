@@ -55,7 +55,7 @@ class AgentIn(BaseModel):
     tone: str = "friendly"
     welcome_message: str = ""
     primary_color: str = "#4F46E5"
-    model: str = "qwen/qwen3.8-27b:free"
+    model: str = "google/gemma-4-31b-it:free"
     temperature: float = 0.7
     is_public: bool = True
 
@@ -84,7 +84,7 @@ class AgentOut(BaseModel):
     tone: str = "friendly"
     welcome_message: str = ""
     primary_color: str = "#4F46E5"
-    model: str = "qwen/qwen3.8-27b:free"
+    model: str = "google/gemma-4-31b-it:free"
     temperature: float = 0.7
     is_public: bool = True
     created_at: Optional[datetime] = None

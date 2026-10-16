@@ -44,7 +44,7 @@ def create_agent(body: schemas.AgentIn, user: models.User = Depends(get_current_
         description=body.description or "", business_hours=body.business_hours or "",
         contact=body.contact or "", tone=body.tone or "friendly",
         welcome_message=body.welcome_message or "", primary_color=body.primary_color or "#4F46E5",
-        model=body.model or "qwen/qwen3.8-27b:free", temperature=body.temperature if body.temperature is not None else 0.7,
+        model=body.model or "google/gemma-4-31b-it:free", temperature=body.temperature if body.temperature is not None else 0.7,
         is_public=body.is_public,
     )
     db.add(a)

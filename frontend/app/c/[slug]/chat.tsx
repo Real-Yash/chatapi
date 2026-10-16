@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Bot, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Markdown } from "@/components/markdown";
 import { cn } from "@/lib/utils";
 import {
   getPublicAgent,
@@ -158,7 +159,13 @@ export default function PublicChat({ slug }: { slug: string }) {
               }
               style={m.role === "user" ? { backgroundColor: color } : undefined}
             >
-              {m.content || (busy && i === messages.length - 1 ? "…" : "")}
+              {m.role === "assistant" ? (
+                <Markdown
+                  text={m.content || (busy && i === messages.length - 1 ? "…" : "")}
+                />
+              ) : (
+                m.content
+              )}
             </div>
           ))}
           <div ref={bottomRef} />

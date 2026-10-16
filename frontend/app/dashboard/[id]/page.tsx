@@ -18,6 +18,7 @@ import {
   Type,
 } from "lucide-react";
 import { SiteHeader } from "@/components/header";
+import { Markdown } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -408,7 +409,13 @@ function PlaygroundTab({ agentId }: { agentId: string }) {
                     : "mr-auto max-w-[85%] rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800"
                 }
               >
-                {m.content || (busy && i === messages.length - 1 ? "…" : "")}
+                {m.role === "assistant" ? (
+                  <Markdown
+                    text={m.content || (busy && i === messages.length - 1 ? "…" : "")}
+                  />
+                ) : (
+                  m.content
+                )}
               </div>
             ))
           )}

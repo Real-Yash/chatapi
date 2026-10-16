@@ -63,7 +63,7 @@ class Agent(Base):
     tone = Column(String, default="friendly", nullable=False)
     welcome_message = Column(Text, default="", nullable=False)
     primary_color = Column(String, default="#4F46E5", nullable=False)
-    model = Column(String, default="qwen/qwen3.8-27b:free", nullable=False)
+    model = Column(String, default="google/gemma-4-31b-it:free", nullable=False)
     temperature = Column(Float, default=0.7, nullable=False)
     is_public = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

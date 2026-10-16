@@ -25,8 +25,8 @@ bookable via a one-line embeddable widget.
 ```
 
 - **backend/** (FastAPI, `:8000`): local JWT auth, agent CRUD, document
-  ingest, local SQLite storage + in-Python cosine retrieval, OpenRouter
-  chat completions (default free model `qwen/qwen3.8-27b:free`).
+  ingest, local SQLite storage + in-Python cosine retrieval,   OpenRouter
+  chat completions (default free model `google/gemma-4-31b-it:free`).
 - **frontend/** (Next.js + shadcn/ui, `:3000`): landing, local
   signup/login, dashboard + agent builder wizard + playground, public
   chat pages at `/c/[slug]` (`?embed=true` renders a chromeless panel

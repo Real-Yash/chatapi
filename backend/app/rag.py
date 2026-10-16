@@ -93,7 +93,7 @@ def chat_headers() -> dict:
 async def stream_openrouter(model: str, temperature: float, system: str, history: List[dict], user_msg: str) -> AsyncGenerator[str, None]:
     """Yield raw text deltas from OpenRouter SSE stream."""
     payload = {
-        "model": model or "qwen/qwen3.8-27b:free",
+        "model": model or "google/gemma-4-31b-it:free",
         "temperature": temperature if temperature is not None else 0.7,
         "stream": True,
         "messages": [{"role": "system", "content": system}] + history + [{"role": "user", "content": user_msg}],
@@ -121,7 +121,7 @@ async def stream_openrouter(model: str, temperature: float, system: str, history
 
 def complete_openrouter_sync(model: str, temperature: float, system: str, history: List[dict], user_msg: str) -> str:
     payload = {
-        "model": model or "qwen/qwen3.8-27b:free",
+        "model": model or "google/gemma-4-31b-it:free",
         "temperature": temperature if temperature is not None else 0.7,
         "stream": False,
         "messages": [{"role": "system", "content": system}] + history + [{"role": "user", "content": user_msg}],
