@@ -102,7 +102,8 @@ class ManualDocIn(BaseModel):
 
 class ScrapeIn(BaseModel):
     url: str = Field(min_length=4)
-    max_pages: int = 5
+    max_pages: Optional[int] = None
+    keywords: Optional[str] = None
 
 
 class DocumentOut(BaseModel):

@@ -5,11 +5,7 @@ from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, St
 from sqlalchemy import JSON, TypeDecorator
 from sqlalchemy.orm import relationship
 
-from app.db import Base
-
-# Local-only mode: always store embeddings as JSON lists in SQLite and score
-# cosine similarity in Python. No pgvector / Postgres server required.
-HAS_PGVECTOR = False
+from app.db import EMBED_DIMS, Base
 
 
 class _LocalVector(TypeDecorator):
@@ -17,13 +13,13 @@ class _LocalVector(TypeDecorator):
     impl = JSON
     cache_ok = True
 
-    def __init__(self, dims=1536):
+    def __init__(self, dims=EMBED_DIMS):
         super().__init__()
         self.dims = dims
 
 
 Vector = _LocalVector  # type: ignore
-EmbeddingColumn = _LocalVector(1536)  # type: ignore
+EmbeddingColumn = _LocalVector(EMBED_DIMS)  # type: ignore
 
 
 def _uid():
@@ -94,6 +90,8 @@ class Chunk(Base):
     document_id = Column(String, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
     agent_id = Column(String, ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
     content = Column(Text, nullable=False)
+    source_url = Column(Text, default="", nullable=False)
+    heading = Column(Text, default="", nullable=False)
     embedding = Column(EmbeddingColumn, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 

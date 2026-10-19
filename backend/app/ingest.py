@@ -7,32 +7,81 @@ from typing import List
 
 import httpx
 
-from app.db import OPENROUTER_API_KEY, OPENROUTER_EMBED_MODEL
+from app.db import EMBED_DIMS, OPENROUTER_API_KEY, OPENROUTER_EMBED_MODEL
 
 
-def chunk_text(text: str, size: int = 800, overlap: int = 150) -> List[str]:
-    """Simple char splitter, no langchain dependency."""
+def _heading(line: str):
+    stripped = line.strip()
+    if not stripped.startswith("#"):
+        return None
+    level = len(stripped) - len(stripped.lstrip("#"))
+    title = stripped[level:].strip()
+    if not title or level > 6:
+        return None
+    return level, title
+
+
+def chunk_sections(text: str, size: int = 800, overlap: int = 150) -> List[dict]:
+    """Split text into char chunks while tracking the markdown heading path.
+
+    Headings are emitted by the scraper (`## Title`) and by docx extraction, so
+    every chunk keeps the section it came from for citation.
+    """
     text = (text or "").strip()
     if not text:
         return []
     if size <= 0:
-        return [text]
+        return [{"content": text, "heading": ""}]
     if overlap < 0:
         overlap = 0
     if overlap >= size:
         overlap = size // 4
-    chunks: List[str] = []
-    start = 0
-    n = len(text)
-    while start < n:
-        end = min(start + size, n)
-        piece = text[start:end].strip()
-        if piece:
-            chunks.append(piece)
-        if end >= n:
-            break
-        start = end - overlap
+
+    sections: List[tuple] = []
+    stack: List[tuple] = []
+    buffer: List[str] = []
+    heading_path = ""
+
+    def flush():
+        body = "\n".join(buffer).strip()
+        buffer.clear()
+        if body:
+            sections.append((heading_path, body))
+
+    for line in text.splitlines():
+        parsed = _heading(line)
+        if parsed:
+            flush()
+            level, title = parsed
+            while stack and stack[-1][0] >= level:
+                stack.pop()
+            stack.append((level, title))
+            heading_path = " › ".join(t for _, t in stack)
+            continue
+        buffer.append(line)
+    flush()
+
+    if not sections:
+        sections = [("", text)]
+
+    chunks: List[dict] = []
+    for heading, body in sections:
+        start = 0
+        n = len(body)
+        while start < n:
+            end = min(start + size, n)
+            piece = body[start:end].strip()
+            if piece:
+                chunks.append({"content": piece, "heading": heading})
+            if end >= n:
+                break
+            start = end - overlap
     return chunks
+
+
+def chunk_text(text: str, size: int = 800, overlap: int = 150) -> List[str]:
+    """Backwards-compatible wrapper returning chunk contents only."""
+    return [c["content"] for c in chunk_sections(text, size=size, overlap=overlap)]
 
 
 def extract_text_from_file(path: str, filename: str = "") -> str:
@@ -50,7 +99,15 @@ def extract_text_from_file(path: str, filename: str = "") -> str:
     if ext == ".docx":
         import docx
         doc = docx.Document(path)
-        return "\n".join(p.text for p in doc.paragraphs).strip()
+        parts = []
+        for p in doc.paragraphs:
+            text = p.text.strip()
+            style = (p.style.name or "").lower() if p.style is not None else ""
+            if text and style.startswith("heading"):
+                parts.append(f"## {text}")
+            else:
+                parts.append(p.text)
+        return "\n".join(parts).strip()
     if ext == ".csv":
         out = []
         with open(path, newline="", encoding="utf-8", errors="ignore") as f:
@@ -62,7 +119,7 @@ def extract_text_from_file(path: str, filename: str = "") -> str:
         return f.read().strip()
 
 
-def fallback_embedding(text: str, dims: int = 1536) -> List[float]:
+def fallback_embedding(text: str, dims: int = EMBED_DIMS) -> List[float]:
     """Deterministic hash-bucketed embedding used when no OPENROUTER key is set."""
     vec = [0.0] * dims
     for token in text.lower().split():
@@ -72,7 +129,7 @@ def fallback_embedding(text: str, dims: int = 1536) -> List[float]:
     return [v / norm for v in vec]
 
 
-def embed_texts(texts: List[str], dims: int = 1536) -> List[List[float]]:
+def embed_texts(texts: List[str], dims: int = EMBED_DIMS) -> List[List[float]]:
     texts = [t or "" for t in texts]
     if not texts:
         return []

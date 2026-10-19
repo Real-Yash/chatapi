@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.db import OPENROUTER_API_KEY, get_db
-from app.rag import build_system_prompt, complete_openrouter_sync, retrieve
+from app.rag import build_system_prompt, chunk_source, complete_openrouter_sync, retrieve
 
 router = APIRouter(tags=["public"])
 
@@ -36,7 +36,7 @@ def public_chat(
     bname = business.name if business else "the business"
     chunks, _ = retrieve(db, agent.id, body.message)
     system = build_system_prompt(agent, bname, chunks)
-    sources = [{"document_id": c.document_id, "content": (c.content or "")[:500]} for c in chunks]
+    sources = [chunk_source(c) for c in chunks]
 
     session_id = (body.session_id or "api").strip() or "api"
     conv = db.query(models.Conversation).filter(

@@ -141,11 +141,17 @@ async def add_knowledge_file(agent_id: str, file: UploadFile = File(...), user: 
 def add_knowledge_url(agent_id: str, body: dict, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     from app.routers.documents import _store_chunks as _sc
     from app.scraper import scrape_site
-    get_owned_agent(db, user.id, agent_id)
+    agent = get_owned_agent(db, user.id, agent_id)
     url = (body.get("url") or "").strip()
     if not url:
         raise HTTPException(status_code=422, detail="url is required")
-    pages = scrape_site(url, max_pages=5)
+    context = f"{agent.name}. {agent.description or ''}".strip()
+    pages = scrape_site(
+        url,
+        max_pages=body.get("max_pages"),
+        keywords=body.get("keywords"),
+        context=context,
+    )
     if not pages:
         raise HTTPException(status_code=400, detail="No pages scraped")
     out = []
@@ -198,13 +204,13 @@ def widget_agent(slug: str, db: Session = Depends(get_db)):
 @router.post("/agents/{agent_id}/chat")
 async def playground_chat(agent_id: str, body: schemas.ChatIn, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     from app.db import OPENROUTER_API_KEY
-    from app.rag import build_system_prompt, retrieve, stream_openrouter
+    from app.rag import build_system_prompt, chunk_source, retrieve, stream_openrouter
     a = get_owned_agent(db, user.id, agent_id)
     business = db.query(models.Business).filter(models.Business.id == a.business_id).first()
     bname = business.name if business else "the business"
     chunks, _ = retrieve(db, a.id, body.message)
     system = build_system_prompt(a, bname, chunks)
-    sources = [{"document_id": c.document_id, "content": (c.content or "")[:500]} for c in chunks]
+    sources = [chunk_source(c) for c in chunks]
     conv = _get_or_create_conversation(db, a.id, (body.session_id or "playground"))
     hist = _history(db, conv.id)
     db.add(models.Message(conversation_id=conv.id, role="user", content=body.message, sources=sources))

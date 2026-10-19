@@ -19,22 +19,23 @@ bookable via a one-line embeddable widget.
                                                  |
                                                  v
                                         +--------+---------+
-                                        | Postgres pgvector|
-                                        | pg16 + pgdata vol|
+                                        |  SQLite + uploads|
+                                        |  (local, no server)|
                                         +------------------+
 ```
 
 - **backend/** (FastAPI, `:8000`): local JWT auth, agent CRUD, document
-  ingest, local SQLite storage + in-Python cosine retrieval,   OpenRouter
-  chat completions (default free model `google/gemma-4-31b-it:free`).
+  ingest, local SQLite storage + hybrid (vector + BM25) retrieval,
+  OpenRouter chat completions (default free model
+  `google/gemma-4-31b-it:free`).
 - **frontend/** (Next.js + shadcn/ui, `:3000`): landing, local
   signup/login, dashboard + agent builder wizard + playground, public
   chat pages at `/c/[slug]` (`?embed=true` renders a chromeless panel
   for the iframe).
 - **widget/** (vanilla JS, no deps): floating bubble + lazy `380×600` iframe.
 - No external DB or auth provider. Storage is a local SQLite file
-   (`backend/chatapi.db`) + `backend/uploads/`. The only network call is
-  OpenRouter for embeddings/chat.
+  (`backend/chatapi.db`) + `backend/uploads/`. External calls are limited to
+  the site being crawled and OpenRouter for embeddings/chat.
 
 ## Quickstart (local, no Docker needed)
 
@@ -61,6 +62,29 @@ npm install && npm run dev
 
 `docker-compose.yml` is kept as an optional deployment path; local dev
 needs nothing but the two commands above.
+
+## How knowledge is indexed
+
+- **URL ingestion** (`scrape_site`) reads `robots.txt`, collects URLs from
+  the sitemap(s) and the seed page, canonicalizes them (tracking params,
+  `www`, trailing slashes), and ranks candidates against the agent's
+  name/description. When `OPENROUTER_API_KEY` is set, a cheap LLM ranks the
+  candidates and a second pass drops junk pages; it may only choose URLs
+  discovered by the crawler, never invented ones.
+- Pages are fetched concurrently (`SCRAPE_CONCURRENCY`) with a global
+  politeness delay (`SCRAPE_DELAY_MS`, raised to `Crawl-delay` when
+  advertised). PDFs are text-extracted, and thin pages can be retried with
+  headless Chromium if `playwright` is installed (`pip install playwright &&
+  playwright install chromium`, set `SCRAPE_JS_RENDER=1`).
+- Text is chunked per section with the heading path stored on each chunk
+  (`Opening Hours › Weekends`) so answers can cite `URL › section`.
+- Retrieval combines vector similarity with BM25 keyword scores and applies
+  `MIN_SIMILARITY`; when nothing is relevant the model is told there is no
+  context instead of being handed unrelated chunks.
+
+Crawler tuning lives in `backend/.env.example` (`SCRAPE_MAX_PAGES`,
+`SCRAPE_LLM_RANK`, `SCRAPE_RANK_MODEL`, ...). Without an OpenRouter key the
+crawler falls back to lexical ranking and chat runs in embed-only mode.
 
 ## API reference
 

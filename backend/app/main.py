@@ -1,10 +1,13 @@
+import logging
 import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.db import UPLOAD_DIR, Base, engine, ensure_vector_extension
+from app.db import OPENROUTER_API_KEY, UPLOAD_DIR, Base, engine, ensure_schema, ensure_vector_extension
 from app.routers import agents, analytics, auth, businesses, chat, compat, documents, keys, public
+
+log = logging.getLogger("chatapi")
 
 app = FastAPI(title="ChatAPI Backend", version="1.0.0")
 
@@ -22,6 +25,13 @@ def startup():
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     ensure_vector_extension()
     Base.metadata.create_all(bind=engine)
+    ensure_schema()
+    if not OPENROUTER_API_KEY:
+        log.warning(
+            "OPENROUTER_API_KEY is not set: embeddings use a deterministic hash "
+            "fallback and chat runs in embed-only mode. Set it in backend/.env "
+            "for real semantic retrieval and LLM answers."
+        )
 
 
 @app.get("/health")

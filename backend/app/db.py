@@ -26,6 +26,24 @@ EMBED_DIMS = int(os.getenv("EMBED_DIMS", "1536"))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "150"))
 RETRIEVE_TOP_K = int(os.getenv("RETRIEVE_TOP_K", "8"))
+# Minimum cosine similarity for a chunk to be considered relevant. Chunks below
+# this floor are only kept if they match query keywords (hybrid retrieval), so
+# out-of-domain questions return no context instead of hallucination bait.
+MIN_SIMILARITY = float(os.getenv("MIN_SIMILARITY", "0.25"))
+# Weight of vector similarity vs. keyword (BM25) score in hybrid ranking.
+VECTOR_WEIGHT = float(os.getenv("VECTOR_WEIGHT", "0.7"))
+
+# --- Crawler ---
+SCRAPE_MAX_PAGES = int(os.getenv("SCRAPE_MAX_PAGES", "25"))
+SCRAPE_MAX_CANDIDATES = int(os.getenv("SCRAPE_MAX_CANDIDATES", "300"))
+SCRAPE_CONCURRENCY = int(os.getenv("SCRAPE_CONCURRENCY", "6"))
+SCRAPE_DELAY_MS = int(os.getenv("SCRAPE_DELAY_MS", "350"))
+SCRAPE_TIMEOUT = int(os.getenv("SCRAPE_TIMEOUT", "15"))
+SCRAPE_LLM_RANK = os.getenv("SCRAPE_LLM_RANK", "1").lower() not in ("0", "false", "no")
+SCRAPE_RANK_MODEL = os.getenv("SCRAPE_RANK_MODEL", "google/gemma-4-31b-it:free")
+SCRAPE_MIN_TEXT_CHARS = int(os.getenv("SCRAPE_MIN_TEXT_CHARS", "200"))
+SCRAPE_MIN_PAGE_CHARS = int(os.getenv("SCRAPE_MIN_PAGE_CHARS", "40"))
+SCRAPE_JS_RENDER = os.getenv("SCRAPE_JS_RENDER", "1").lower() not in ("0", "false", "no")
 
 if DATABASE_URL.startswith("sqlite"):
     engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False}, pool_pre_ping=True)
@@ -52,4 +70,26 @@ def ensure_vector_extension():
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             conn.commit()
     except Exception:
+        pass
+
+
+def ensure_schema():
+    """Add columns introduced after the first release without a migration tool."""
+    additions = {
+        "source_url": "TEXT DEFAULT '' NOT NULL",
+        "heading": "TEXT DEFAULT '' NOT NULL",
+    }
+    try:
+        with engine.connect() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                existing = {row[1] for row in conn.execute(text("PRAGMA table_info(chunks)"))}
+                for name, ddl in additions.items():
+                    if name not in existing:
+                        conn.execute(text(f"ALTER TABLE chunks ADD COLUMN {name} {ddl}"))
+            else:
+                for name, ddl in additions.items():
+                    conn.execute(text(f"ALTER TABLE chunks ADD COLUMN IF NOT EXISTS {name} {ddl}"))
+            conn.commit()
+    except Exception:
+        # Fresh databases already have the columns; never block startup.
         pass

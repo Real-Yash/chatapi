@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.db import OPENROUTER_API_KEY, get_db
-from app.rag import build_system_prompt, complete_openrouter_sync, retrieve, stream_openrouter
+from app.rag import build_system_prompt, chunk_source, complete_openrouter_sync, retrieve, stream_openrouter
 
 router = APIRouter(tags=["chat"])
 
@@ -47,7 +47,7 @@ async def chat(slug: str, body: schemas.ChatIn, db: Session = Depends(get_db)):
 
     chunks, _ = retrieve(db, agent.id, body.message)
     system = build_system_prompt(agent, bname, chunks)
-    sources = [{"document_id": c.document_id, "content": (c.content or "")[:500]} for c in chunks]
+    sources = [chunk_source(c) for c in chunks]
     conv = _get_or_create_conversation(db, agent.id, body.session_id or "default")
     hist = _history(db, conv.id)
 
@@ -94,7 +94,7 @@ def embed_only(slug: str, body: schemas.ChatIn, db: Session = Depends(get_db)):
     """Fallback when no OPENROUTER key: echo retrieved chunks without an LLM call."""
     agent = _get_agent_by_slug(db, slug)
     chunks, _ = retrieve(db, agent.id, body.message)
-    data = [{"document_id": c.document_id, "content": c.content} for c in chunks]
+    data = [chunk_source(c) | {"content": c.content} for c in chunks]
     conv = _get_or_create_conversation(db, agent.id, body.session_id or "default")
     db.add(models.Message(conversation_id=conv.id, role="user", content=body.message, sources=data))
     echo = "\n\n---\n\n".join((c.content or "")[:1000] for c in chunks) if chunks else "No relevant content found."

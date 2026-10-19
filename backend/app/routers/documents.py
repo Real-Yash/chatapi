@@ -6,11 +6,8 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.auth import get_current_user, get_owned_agent
-from app.db import UPLOAD_DIR, get_db
-from app.ingest import chunk_text, embed_texts, extract_text_from_file
-
-# import chunk defaults from ingest via db to avoid circulars
-from app.db import CHUNK_OVERLAP, CHUNK_SIZE
+from app.db import CHUNK_OVERLAP, CHUNK_SIZE, UPLOAD_DIR, get_db
+from app.ingest import chunk_sections, embed_texts, extract_text_from_file
 
 router = APIRouter(tags=["documents"])
 
@@ -18,16 +15,30 @@ ALLOWED_EXTS = {".pdf", ".docx", ".txt", ".csv", ".md"}
 
 
 def _store_chunks(db: Session, doc: models.Document, text: str):
-    chunks = chunk_text(text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
+    chunks = chunk_sections(text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
     if not chunks:
         doc.status = "failed"
         doc.error = "No extractable text found"
         db.commit()
         return []
-    embeddings = embed_texts(chunks)
+    embeddings = embed_texts([
+        f"{c['heading']}\n{c['content']}" if c["heading"] else c["content"]
+        for c in chunks
+    ])
+    source_url = doc.source_url or ""
+    if not source_url.startswith(("http://", "https://")):
+        # Uploaded files store a local path; never expose it as a citation URL.
+        source_url = ""
     rows = []
-    for content, emb in zip(chunks, embeddings):
-        rows.append(models.Chunk(document_id=doc.id, agent_id=doc.agent_id, content=content, embedding=emb))
+    for chunk, emb in zip(chunks, embeddings):
+        rows.append(models.Chunk(
+            document_id=doc.id,
+            agent_id=doc.agent_id,
+            content=chunk["content"],
+            heading=chunk["heading"],
+            source_url=source_url,
+            embedding=emb,
+        ))
     db.bulk_save_objects(rows)
     doc.status = "ready"
     doc.error = ""
@@ -85,8 +96,9 @@ async def upload_doc(agent_id: str, file: UploadFile = File(...), user: models.U
 @router.post("/agents/{agent_id}/documents/scrape", response_model=list[schemas.DocumentOut])
 def scrape_docs(agent_id: str, body: schemas.ScrapeIn, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     from app.scraper import scrape_site
-    get_owned_agent(db, user.id, agent_id)
-    pages = scrape_site(body.url, max_pages=body.max_pages)
+    agent = get_owned_agent(db, user.id, agent_id)
+    context = f"{agent.name}. {agent.description or ''}".strip()
+    pages = scrape_site(body.url, max_pages=body.max_pages, keywords=body.keywords, context=context)
     if not pages:
         raise HTTPException(status_code=400, detail="No pages scraped")
     created = []
