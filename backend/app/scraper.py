@@ -7,6 +7,7 @@ politeness delay. HTML is reduced to main content (headings preserved as
 `## ...`), PDFs are text-extracted, and thin pages can be retried through
 headless Chromium if Playwright is installed.
 """
+
 import gzip
 import json
 import logging
@@ -43,24 +44,104 @@ log = logging.getLogger("chatapi.scraper")
 USER_AGENT = "ChatAPI/1.0 (+local)"
 
 _TRACKING_PARAMS = {
-    "fbclid", "gclid", "dclid", "msclkid", "mc_cid", "mc_eid", "igshid",
-    "ref", "referrer", "source", "utm_source", "utm_medium", "utm_campaign",
-    "utm_term", "utm_content", "utm_id", "_ga", "_gl",
+    "fbclid",
+    "gclid",
+    "dclid",
+    "msclkid",
+    "mc_cid",
+    "mc_eid",
+    "igshid",
+    "ref",
+    "referrer",
+    "source",
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "utm_id",
+    "_ga",
+    "_gl",
 }
 _ASSET_EXTS = {
-    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".ico", ".bmp", ".tif",
-    ".tiff", ".css", ".js", ".mjs", ".json", ".xml", ".rss", ".atom", ".zip",
-    ".rar", ".7z", ".tar", ".gz", ".mp3", ".mp4", ".mov", ".avi", ".webm",
-    ".woff", ".woff2", ".ttf", ".eot", ".exe", ".dmg", ".apk",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".webp",
+    ".svg",
+    ".ico",
+    ".bmp",
+    ".tif",
+    ".tiff",
+    ".css",
+    ".js",
+    ".mjs",
+    ".json",
+    ".xml",
+    ".rss",
+    ".atom",
+    ".zip",
+    ".rar",
+    ".7z",
+    ".tar",
+    ".gz",
+    ".mp3",
+    ".mp4",
+    ".mov",
+    ".avi",
+    ".webm",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".eot",
+    ".exe",
+    ".dmg",
+    ".apk",
 }
 _STRIP_TAGS = ["script", "style", "nav", "footer", "header", "aside", "noscript", "svg", "form", "iframe", "button"]
 _HEADING_TAGS = {"h1", "h2", "h3", "h4"}
 _BLOCK_TAGS = {"p", "li", "pre", "blockquote", "td", "th", "figcaption"}
 _STOP_WORDS = {
-    "the", "and", "for", "you", "your", "our", "with", "that", "this", "from",
-    "are", "was", "were", "have", "has", "will", "can", "what", "when", "where",
-    "how", "why", "who", "about", "into", "over", "under", "more", "most",
-    "all", "any", "not", "but", "out", "use", "get", "set", "new", "one",
+    "the",
+    "and",
+    "for",
+    "you",
+    "your",
+    "our",
+    "with",
+    "that",
+    "this",
+    "from",
+    "are",
+    "was",
+    "were",
+    "have",
+    "has",
+    "will",
+    "can",
+    "what",
+    "when",
+    "where",
+    "how",
+    "why",
+    "who",
+    "about",
+    "into",
+    "over",
+    "under",
+    "more",
+    "most",
+    "all",
+    "any",
+    "not",
+    "but",
+    "out",
+    "use",
+    "get",
+    "set",
+    "new",
+    "one",
 }
 
 
@@ -132,11 +213,13 @@ def _session() -> requests.Session:
     session = getattr(_thread_local, "session", None)
     if session is None:
         session = requests.Session()
-        session.headers.update({
-            "User-Agent": USER_AGENT,
-            "Accept": "text/html,application/xhtml+xml,application/pdf;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en",
-        })
+        session.headers.update(
+            {
+                "User-Agent": USER_AGENT,
+                "Accept": "text/html,application/xhtml+xml,application/pdf;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en",
+            }
+        )
         _thread_local.session = session
     return session
 
@@ -162,10 +245,11 @@ def _request(url: str, timeout: int, attempts: int = 2):
 def _load_robots(start_url: str, timeout: int):
     parsed = urlparse(start_url)
     base = f"{parsed.scheme}://{parsed.netloc}"
+    robots_url = urljoin(base, "/robots.txt")
     parser = RobotFileParser()
-    parser.set_url(urljoin(base, "/robots.txt"))
+    parser.set_url(robots_url)
     try:
-        resp = _request(parser.url, timeout)
+        resp = _request(robots_url, timeout)
         if resp is not None and resp.status_code == 200:
             parser.parse(resp.text.splitlines())
             return parser
@@ -200,9 +284,11 @@ def _xml_locs(content: bytes):
         return [], []
     root_tag = root.tag.split("}")[-1].lower()
     locs = [
-        el.text.strip()
+        text
         for el in root.iter()
-        if el.tag.split("}")[-1].lower() == "loc" and (el.text or "").strip()
+        if el.tag.split("}")[-1].lower() == "loc"
+        for text in [(el.text or "").strip()]
+        if text
     ]
     if root_tag == "sitemapindex":
         return [], locs
@@ -238,7 +324,12 @@ def _read_sitemap(url: str, timeout: int, limit: int, depth: int = 0, seen=None,
                 break
             _read_sitemap(
                 _canonical(urljoin(url, child)) or child,
-                timeout, limit, depth + 1, seen, out, limiter,
+                timeout,
+                limit,
+                depth + 1,
+                seen,
+                out,
+                limiter,
             )
     except Exception as exc:
         log.info("sitemap read failed for %s: %s", url, exc)
@@ -249,7 +340,10 @@ def _extract_links(html: str, base_url: str):
     soup = BeautifulSoup(html, "html.parser")
     links = []
     for anchor in soup.find_all("a", href=True):
-        href = (anchor.get("href") or "").strip()
+        raw_href = anchor.get("href")
+        if not isinstance(raw_href, str):
+            continue
+        href = raw_href.strip()
         if not href or href.startswith(("mailto:", "tel:", "javascript:", "#")):
             continue
         url = _canonical(urljoin(base_url, href))
@@ -292,7 +386,7 @@ def _html_to_text(html: str, url: str):
 
     walk(root)
 
-    cleaned = []
+    cleaned: list[str] = []
     for line in lines:
         line = line.strip()
         if not line:
@@ -379,7 +473,7 @@ def _collect_candidates(start_url, robots, timeout, limit, prefetched, limiter):
         parsed = urlparse(start_url)
         sitemaps = [urljoin(f"{parsed.scheme}://{parsed.netloc}", "/sitemap.xml")]
 
-    sitemap_urls = []
+    sitemap_urls: list[str] = []
     for sitemap in sitemaps[:5]:
         if len(sitemap_urls) >= limit:
             break
@@ -554,7 +648,7 @@ def _crawl_one(candidate, robots, limiter, timeout, prefetched):
     return {"url": url, "title": title or url, "text": text}
 
 
-def scrape_site(start_url: str, max_pages: int = None, keywords=None, context: str = ""):
+def scrape_site(start_url: str, max_pages: int | None = None, keywords=None, context: str = ""):
     """Discover, rank, and crawl a site.
 
     Returns a list of `{url, title, text}` preserving the selected URL order.
@@ -570,11 +664,11 @@ def scrape_site(start_url: str, max_pages: int = None, keywords=None, context: s
         keywords = [k.strip() for k in re.split(r"[,\n]", keywords) if k.strip()]
     keywords = [str(k) for k in (keywords or []) if k]
     if not keywords and context:
-        keywords = list(dict.fromkeys(
-            token
-            for token in re.findall(r"\w+", context.lower())
-            if len(token) > 2 and token not in _STOP_WORDS
-        ))[:12]
+        keywords = list(
+            dict.fromkeys(
+                token for token in re.findall(r"\w+", context.lower()) if len(token) > 2 and token not in _STOP_WORDS
+            )
+        )[:12]
 
     timeout = SCRAPE_TIMEOUT
     robots = _load_robots(start_url, timeout)
@@ -589,10 +683,8 @@ def scrape_site(start_url: str, max_pages: int = None, keywords=None, context: s
             pass
 
     limiter = _RateLimiter(delay)
-    prefetched = {}
-    candidates = _collect_candidates(
-        start_url, robots, timeout, SCRAPE_MAX_CANDIDATES, prefetched, limiter
-    )
+    prefetched: dict[str, requests.Response] = {}
+    candidates = _collect_candidates(start_url, robots, timeout, SCRAPE_MAX_CANDIDATES, prefetched, limiter)
     if not candidates:
         return []
 

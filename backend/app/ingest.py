@@ -1,4 +1,5 @@
 """Text extraction + chunking + embedding via OpenRouter."""
+
 import csv
 import hashlib
 import math
@@ -88,6 +89,7 @@ def extract_text_from_file(path: str, filename: str = "") -> str:
     ext = os.path.splitext(filename or path)[1].lower()
     if ext == ".pdf":
         from pypdf import PdfReader
+
         reader = PdfReader(path)
         parts = []
         for page in reader.pages:
@@ -98,6 +100,7 @@ def extract_text_from_file(path: str, filename: str = "") -> str:
         return "\n".join(parts).strip()
     if ext == ".docx":
         import docx
+
         doc = docx.Document(path)
         parts = []
         for p in doc.paragraphs:
@@ -142,7 +145,7 @@ def embed_texts(texts: List[str], dims: int = EMBED_DIMS) -> List[List[float]]:
     out: List[List[float]] = []
     # Batch in groups of 32 to stay under payload limits.
     for i in range(0, len(texts), 32):
-        batch = texts[i:i + 32]
+        batch = texts[i : i + 32]
         with httpx.Client(timeout=60) as client:
             r = client.post(
                 "https://openrouter.ai/api/v1/embeddings",

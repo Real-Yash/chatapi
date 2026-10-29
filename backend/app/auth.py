@@ -14,6 +14,7 @@ _bearer = HTTPBearer(auto_error=False)
 
 def _bcrypt():
     import bcrypt as _b
+
     return _b
 
 

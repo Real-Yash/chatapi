@@ -21,24 +21,23 @@ def _store_chunks(db: Session, doc: models.Document, text: str):
         doc.error = "No extractable text found"
         db.commit()
         return []
-    embeddings = embed_texts([
-        f"{c['heading']}\n{c['content']}" if c["heading"] else c["content"]
-        for c in chunks
-    ])
+    embeddings = embed_texts([f"{c['heading']}\n{c['content']}" if c["heading"] else c["content"] for c in chunks])
     source_url = doc.source_url or ""
     if not source_url.startswith(("http://", "https://")):
         # Uploaded files store a local path; never expose it as a citation URL.
         source_url = ""
     rows = []
     for chunk, emb in zip(chunks, embeddings):
-        rows.append(models.Chunk(
-            document_id=doc.id,
-            agent_id=doc.agent_id,
-            content=chunk["content"],
-            heading=chunk["heading"],
-            source_url=source_url,
-            embedding=emb,
-        ))
+        rows.append(
+            models.Chunk(
+                document_id=doc.id,
+                agent_id=doc.agent_id,
+                content=chunk["content"],
+                heading=chunk["heading"],
+                source_url=source_url,
+                embedding=emb,
+            )
+        )
     db.bulk_save_objects(rows)
     doc.status = "ready"
     doc.error = ""
@@ -47,12 +46,19 @@ def _store_chunks(db: Session, doc: models.Document, text: str):
 
 
 @router.post("/agents/{agent_id}/documents/manual", response_model=schemas.DocumentOut)
-def add_manual(agent_id: str, body: schemas.ManualDocIn, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def add_manual(
+    agent_id: str,
+    body: schemas.ManualDocIn,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     get_owned_agent(db, user.id, agent_id)
     text = (body.text or body.content or "").strip()
     if not text:
         raise HTTPException(status_code=422, detail="text or content is required")
-    doc = models.Document(agent_id=agent_id, type="manual", filename=body.title or "manual", source_url="", status="processing")
+    doc = models.Document(
+        agent_id=agent_id, type="manual", filename=body.title or "manual", source_url="", status="processing"
+    )
     db.add(doc)
     db.commit()
     db.refresh(doc)
@@ -67,7 +73,12 @@ def add_manual(agent_id: str, body: schemas.ManualDocIn, user: models.User = Dep
 
 
 @router.post("/agents/{agent_id}/documents/upload", response_model=schemas.DocumentOut)
-async def upload_doc(agent_id: str, file: UploadFile = File(...), user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def upload_doc(
+    agent_id: str,
+    file: UploadFile = File(...),
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     get_owned_agent(db, user.id, agent_id)
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in ALLOWED_EXTS:
@@ -78,7 +89,9 @@ async def upload_doc(agent_id: str, file: UploadFile = File(...), user: models.U
     data = await file.read()
     with open(dest, "wb") as f:
         f.write(data)
-    doc = models.Document(agent_id=agent_id, type="upload", filename=file.filename or safe, source_url=dest, status="processing")
+    doc = models.Document(
+        agent_id=agent_id, type="upload", filename=file.filename or safe, source_url=dest, status="processing"
+    )
     db.add(doc)
     db.commit()
     db.refresh(doc)
@@ -94,8 +107,11 @@ async def upload_doc(agent_id: str, file: UploadFile = File(...), user: models.U
 
 
 @router.post("/agents/{agent_id}/documents/scrape", response_model=list[schemas.DocumentOut])
-def scrape_docs(agent_id: str, body: schemas.ScrapeIn, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def scrape_docs(
+    agent_id: str, body: schemas.ScrapeIn, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
+):
     from app.scraper import scrape_site
+
     agent = get_owned_agent(db, user.id, agent_id)
     context = f"{agent.name}. {agent.description or ''}".strip()
     pages = scrape_site(body.url, max_pages=body.max_pages, keywords=body.keywords, context=context)
@@ -103,7 +119,9 @@ def scrape_docs(agent_id: str, body: schemas.ScrapeIn, user: models.User = Depen
         raise HTTPException(status_code=400, detail="No pages scraped")
     created = []
     for p in pages:
-        doc = models.Document(agent_id=agent_id, type="scrape", filename=(p["url"] or "")[:255], source_url=p["url"], status="processing")
+        doc = models.Document(
+            agent_id=agent_id, type="scrape", filename=(p["url"] or "")[:255], source_url=p["url"], status="processing"
+        )
         db.add(doc)
         db.commit()
         db.refresh(doc)
@@ -121,7 +139,12 @@ def scrape_docs(agent_id: str, body: schemas.ScrapeIn, user: models.User = Depen
 @router.get("/agents/{agent_id}/documents", response_model=list[schemas.DocumentOut])
 def list_docs(agent_id: str, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     get_owned_agent(db, user.id, agent_id)
-    return db.query(models.Document).filter(models.Document.agent_id == agent_id).order_by(models.Document.created_at.desc()).all()
+    return (
+        db.query(models.Document)
+        .filter(models.Document.agent_id == agent_id)
+        .order_by(models.Document.created_at.desc())
+        .all()
+    )
 
 
 @router.delete("/documents/{doc_id}")

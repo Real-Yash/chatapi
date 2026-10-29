@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -55,7 +55,7 @@ class AgentIn(BaseModel):
     tone: str = "friendly"
     welcome_message: str = ""
     primary_color: str = "#4F46E5"
-    model: str = "google/gemma-4-31b-it:free"
+    model: str = "nvidia/nemotron-3-ultra-550b-a55b:free"
     temperature: float = 0.7
     is_public: bool = True
 
@@ -84,7 +84,7 @@ class AgentOut(BaseModel):
     tone: str = "friendly"
     welcome_message: str = ""
     primary_color: str = "#4F46E5"
-    model: str = "google/gemma-4-31b-it:free"
+    model: str = "nvidia/nemotron-3-ultra-550b-a55b:free"
     temperature: float = 0.7
     is_public: bool = True
     created_at: Optional[datetime] = None

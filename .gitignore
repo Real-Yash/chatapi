@@ -9,6 +9,11 @@ __pycache__/
 venv/
 node_modules/
 .next/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 uploads/
 backend/uploads/
 pgdata/

@@ -1,5 +1,5 @@
 import json
-import uuid
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -7,7 +7,15 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.db import OPENROUTER_API_KEY, get_db
-from app.rag import build_system_prompt, chunk_source, complete_openrouter_sync, retrieve, stream_openrouter
+from app.rag import (
+    build_system_prompt,
+    chunk_source,
+    fallback_answer,
+    retrieve,
+    stream_openrouter,
+)
+
+log = logging.getLogger("chatapi.chat")
 
 router = APIRouter(tags=["chat"])
 
@@ -21,10 +29,14 @@ def _get_agent_by_slug(db: Session, slug: str) -> models.Agent:
 
 def _get_or_create_conversation(db: Session, agent_id: str, session_id: str) -> models.Conversation:
     session_id = (session_id or "default").strip() or "default"
-    c = db.query(models.Conversation).filter(
-        models.Conversation.agent_id == agent_id,
-        models.Conversation.session_id == session_id,
-    ).first()
+    c = (
+        db.query(models.Conversation)
+        .filter(
+            models.Conversation.agent_id == agent_id,
+            models.Conversation.session_id == session_id,
+        )
+        .first()
+    )
     if not c:
         c = models.Conversation(agent_id=agent_id, session_id=session_id)
         db.add(c)
@@ -34,7 +46,13 @@ def _get_or_create_conversation(db: Session, agent_id: str, session_id: str) -> 
 
 
 def _history(db: Session, conv_id: str, limit: int = 10):
-    msgs = db.query(models.Message).filter(models.Message.conversation_id == conv_id).order_by(models.Message.created_at.desc()).limit(limit).all()
+    msgs = (
+        db.query(models.Message)
+        .filter(models.Message.conversation_id == conv_id)
+        .order_by(models.Message.created_at.desc())
+        .limit(limit)
+        .all()
+    )
     msgs = list(reversed(msgs))
     return [{"role": m.role, "content": m.content} for m in msgs if m.role in ("user", "assistant")]
 
@@ -60,7 +78,11 @@ async def chat(slug: str, body: schemas.ChatIn, db: Session = Depends(get_db)):
         echo = (
             (agent.welcome_message + "\n\n" if agent.welcome_message else "")
             + "I don't have a live LLM key configured, but here is what I found in the knowledge base:\n\n"
-            + ("\n\n---\n\n".join((c.content or "")[:1000] for c in chunks) if chunks else "No relevant content found yet. Try adding documents first.")
+            + (
+                "\n\n---\n\n".join((c.content or "")[:1000] for c in chunks)
+                if chunks
+                else "No relevant content found yet. Try adding documents first."
+            )
         )
         db.add(models.Message(conversation_id=conv.id, role="assistant", content=echo, sources=sources))
         db.commit()
@@ -77,8 +99,9 @@ async def chat(slug: str, body: schemas.ChatIn, db: Session = Depends(get_db)):
             async for delta in stream_openrouter(agent.model, agent.temperature, system, hist, body.message):
                 full += delta
                 yield f"data: {json.dumps({'token': delta, 'content': delta, 'citations': sources, 'sources': sources, 'done': False})}\n\n"
-        except Exception as e:
-            err = f"\n[upstream error: {e}]"
+        except Exception as e:  # noqa: BLE001
+            log.warning("chat upstream unavailable for %s: %s", slug, e)
+            err = fallback_answer(agent, chunks, body.message)
             full += err
             yield f"data: {json.dumps({'token': err, 'content': err, 'citations': sources, 'sources': sources, 'done': False})}\n\n"
         db.add(models.Message(conversation_id=conv.id, role="assistant", content=full, sources=sources))

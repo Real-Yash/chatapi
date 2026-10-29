@@ -1,7 +1,12 @@
 """Retrieval + prompt building + OpenRouter chat calls."""
+
+import asyncio
 import json
+import logging
 import math
+import os
 import re
+import time
 from typing import AsyncGenerator, List
 
 import httpx
@@ -18,12 +23,72 @@ from app.db import (
 )
 from app.ingest import embed_texts
 
+log = logging.getLogger("chatapi.rag")
+
+DEFAULT_CHAT_MODEL = os.getenv("OPENROUTER_CHAT_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free")
+FALLBACK_MODELS = [
+    m.strip()
+    for m in os.getenv(
+        "OPENROUTER_FALLBACK_MODELS",
+        "nvidia/nemotron-3-ultra-550b-a55b:free,"
+        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free,"
+        "google/gemma-4-31b-it:free,"
+        "dots-studio/dots-3-note-preview:free",
+    ).split(",")
+    if m.strip()
+]
+RETRY_ATTEMPTS = max(1, int(os.getenv("OPENROUTER_RETRIES", "2")))
+RETRY_STATUS = {429, 500, 502, 503, 504}
+
 _STOPWORDS = {
-    "a", "an", "and", "are", "as", "at", "be", "by", "do", "does", "for", "from",
-    "had", "has", "have", "how", "i", "if", "in", "is", "it", "its", "me", "my",
-    "of", "on", "or", "our", "that", "the", "their", "then", "there", "this",
-    "to", "was", "we", "were", "what", "when", "where", "which", "who", "why",
-    "will", "with", "you", "your",
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "do",
+    "does",
+    "for",
+    "from",
+    "had",
+    "has",
+    "have",
+    "how",
+    "i",
+    "if",
+    "in",
+    "is",
+    "it",
+    "its",
+    "me",
+    "my",
+    "of",
+    "on",
+    "or",
+    "our",
+    "that",
+    "the",
+    "their",
+    "then",
+    "there",
+    "this",
+    "to",
+    "was",
+    "we",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "will",
+    "with",
+    "you",
+    "your",
 }
 
 
@@ -54,10 +119,7 @@ def _keyword_scores(query: str, rows) -> List[float]:
     terms = {t for t in re.findall(r"\w+", (query or "").lower()) if len(t) > 1 and t not in _STOPWORDS}
     if not terms or not rows:
         return [0.0] * len(rows)
-    docs = [
-        re.findall(r"\w+", f"{getattr(c, 'heading', '') or ''} {c.content or ''}".lower())
-        for c in rows
-    ]
+    docs = [re.findall(r"\w+", f"{getattr(c, 'heading', '') or ''} {c.content or ''}".lower()) for c in rows]
     n = len(docs)
     avgdl = sum(len(d) for d in docs) / n or 1.0
     df = {t: sum(1 for d in docs if t in d) for t in terms}
@@ -138,9 +200,7 @@ def chunk_source(chunk) -> dict:
 
 def build_system_prompt(agent: models.Agent, business_name: str, chunks) -> str:
     if chunks:
-        ctx = "\n\n---\n\n".join(
-            f"{source_label(i, c)}\n{(c.content or '')[:2000]}" for i, c in enumerate(chunks, 1)
-        )
+        ctx = "\n\n---\n\n".join(f"{source_label(i, c)}\n{(c.content or '')[:2000]}" for i, c in enumerate(chunks, 1))
     else:
         ctx = "No knowledge base content found for this question."
     return (
@@ -165,18 +225,41 @@ def chat_headers() -> dict:
     }
 
 
-async def stream_openrouter(model: str, temperature: float, system: str, history: List[dict], user_msg: str) -> AsyncGenerator[str, None]:
-    """Yield raw text deltas from OpenRouter SSE stream."""
+def model_chain(model: str) -> List[str]:
+    """Requested model first, then configured fallbacks, de-duplicated."""
+    chain: List[str] = []
+    for m in [model or DEFAULT_CHAT_MODEL, *FALLBACK_MODELS]:
+        if m and m not in chain:
+            chain.append(m)
+    return chain
+
+
+def _status_code(exc: Exception) -> int | None:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code
+    return None
+
+
+def _retryable(exc: Exception) -> bool:
+    code = _status_code(exc)
+    return code is None or code in RETRY_STATUS
+
+
+async def _stream_model(
+    model: str, temperature: float, system: str, history: List[dict], user_msg: str
+) -> AsyncGenerator[str, None]:
     payload = {
-        "model": model or "google/gemma-4-31b-it:free",
+        "model": model,
         "temperature": temperature if temperature is not None else 0.7,
         "stream": True,
         "messages": [{"role": "system", "content": system}] + history + [{"role": "user", "content": user_msg}],
     }
     async with httpx.AsyncClient(timeout=120) as client:
         async with client.stream(
-            "POST", "https://openrouter.ai/api/v1/chat/completions",
-            headers=chat_headers(), json=payload,
+            "POST",
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=chat_headers(),
+            json=payload,
         ) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
@@ -194,17 +277,105 @@ async def stream_openrouter(model: str, temperature: float, system: str, history
                     continue
 
 
+async def stream_openrouter(
+    model: str, temperature: float, system: str, history: List[dict], user_msg: str
+) -> AsyncGenerator[str, None]:
+    """Stream a reply, retrying rate-limited models and falling back down a chain.
+
+    Free OpenRouter models are frequently rate-limited upstream (HTTP 429). We
+    retry the same model briefly, then move to the next configured fallback.
+    If a model has already produced tokens we keep the partial reply rather than
+    duplicating text.
+    """
+    last_err: Exception | None = None
+    for candidate in model_chain(model):
+        for attempt in range(RETRY_ATTEMPTS):
+            produced = False
+            try:
+                async for delta in _stream_model(candidate, temperature, system, history, user_msg):
+                    produced = True
+                    yield delta
+                return
+            except Exception as exc:  # noqa: BLE001 - reported to caller after chain
+                last_err = exc
+                if produced:
+                    log.warning("model %s failed after partial output: %s", candidate, exc)
+                    return
+                retryable = _retryable(exc)
+                log.warning(
+                    "model %s attempt %d/%d failed (%s): %s",
+                    candidate,
+                    attempt + 1,
+                    RETRY_ATTEMPTS,
+                    _status_code(exc) or type(exc).__name__,
+                    exc,
+                )
+                if not retryable:
+                    break
+                if attempt + 1 < RETRY_ATTEMPTS:
+                    await asyncio.sleep(1.2 * (attempt + 1))
+    if last_err:
+        raise last_err
+
+
 def complete_openrouter_sync(model: str, temperature: float, system: str, history: List[dict], user_msg: str) -> str:
-    payload = {
-        "model": model or "google/gemma-4-31b-it:free",
-        "temperature": temperature if temperature is not None else 0.7,
-        "stream": False,
-        "messages": [{"role": "system", "content": system}] + history + [{"role": "user", "content": user_msg}],
-    }
-    with httpx.Client(timeout=120) as client:
-        r = client.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers=chat_headers(), json=payload,
+    last_err: Exception | None = None
+    for candidate in model_chain(model):
+        for attempt in range(RETRY_ATTEMPTS):
+            payload = {
+                "model": candidate,
+                "temperature": temperature if temperature is not None else 0.7,
+                "stream": False,
+                "messages": [{"role": "system", "content": system}] + history + [{"role": "user", "content": user_msg}],
+            }
+            try:
+                with httpx.Client(timeout=120) as client:
+                    r = client.post(
+                        "https://openrouter.ai/api/v1/chat/completions",
+                        headers=chat_headers(),
+                        json=payload,
+                    )
+                    r.raise_for_status()
+                    return r.json()["choices"][0]["message"]["content"]
+            except Exception as exc:  # noqa: BLE001
+                last_err = exc
+                log.warning(
+                    "completion model %s attempt %d/%d failed (%s): %s",
+                    candidate,
+                    attempt + 1,
+                    RETRY_ATTEMPTS,
+                    _status_code(exc) or type(exc).__name__,
+                    exc,
+                )
+                if not _retryable(exc):
+                    break
+                if attempt + 1 < RETRY_ATTEMPTS:
+                    time.sleep(1.2 * (attempt + 1))
+    if last_err:
+        raise last_err
+    return ""
+
+
+def fallback_answer(agent: models.Agent, chunks, message: str = "") -> str:
+    """Grounded reply used when every upstream model is unavailable.
+
+    Keeps the demo useful instead of surfacing a 429/502 to the visitor.
+    """
+    contact = agent.contact or "the team"
+    usable = [c for c in (chunks or []) if (getattr(c, "content", "") or "").strip()]
+    if not usable:
+        return (
+            "I'm having trouble reaching the live AI service right now. "
+            f"Please try again in a moment, or contact {contact}."
         )
-        r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"]
+    parts = []
+    for chunk in usable[:2]:
+        body = (chunk.content or "").strip()
+        if len(body) > 700:
+            body = body[:700].rsplit(" ", 1)[0].rstrip(".,;:") + "…"
+        parts.append(body)
+    return (
+        "Here's what I found in our knowledge base:\n\n"
+        + "\n\n".join(parts)
+        + f"\n\nFor anything else, contact {contact}."
+    )

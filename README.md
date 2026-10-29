@@ -39,21 +39,23 @@ bookable via a one-line embeddable widget.
 
 ## Quickstart (local, no Docker needed)
 
+Backend dependencies are pinned with `uv` (`backend/uv.lock`).
+
 ```bash
 # 1. Backend
 cd backend
 cp .env.example .env   # then put your key in .env: OPENROUTER_API_KEY=sk-or-...
-python3 -m venv .venv && source .venv/bin/activate
-pip install fastapi "uvicorn[standard]" sqlalchemy python-jose bcrypt \
-  httpx beautifulsoup4 requests pypdf python-docx python-multipart \
-  nanoid email-validator python-dotenv
-uvicorn app.main:app --reload --port 8000
+uv sync --extra dev    # creates backend/.venv with pinned deps + dev tools
+uv run uvicorn app.main:app --reload --port 8000
 
 # 2. Frontend (second terminal)
 cd frontend
 cp .env.local.example .env.local
 npm install && npm run dev
 ```
+
+Or from the repo root: `make install` then `make check` (lint, typecheck, tests).
+Pip works too: `pip install -r backend/requirements-dev.txt`.
 
 - Frontend: http://localhost:3000 (sign up → creates a local account)
 - Backend:  http://localhost:8000 (health: `/health`, docs: `/docs`)
@@ -62,6 +64,55 @@ npm install && npm run dev
 
 `docker-compose.yml` is kept as an optional deployment path; local dev
 needs nothing but the two commands above.
+
+## Development
+
+Backend dependencies come from `backend/pyproject.toml`; `uv.lock` and the
+generated `requirements*.txt` files are committed. Common tasks live in the
+root `Makefile`:
+
+| Command | What |
+| --- | --- |
+| `make install` | Install backend (`uv sync --extra dev`) and frontend (`npm install`) |
+| `make lint` | Ruff over `backend/app`, tests, and `seed_demo.py` |
+| `make fmt` | Ruff auto-fix + format |
+| `make typecheck` | mypy (backend) and `tsc --noEmit` (frontend) |
+| `make test` / `make test-cov` | pytest, optionally with coverage |
+| `make check` | lint + typecheck + test |
+| `make precommit-install` | Install git pre-commit hooks |
+| `make lock` | Re-lock deps and regenerate pinned requirements |
+
+Tests are in `backend/tests/` and run against the app with `pytest`.
+
+## Demo stack (3 bots + 3 sites)
+
+`./dev.sh` seeds the demo agents and starts everything in one terminal:
+
+| URL | What |
+| --- | --- |
+| http://localhost:7000 | GreenField AgriSupply site — **AgriGrow Assistant** (FAQ bot) |
+| http://localhost:8080 | NorthBridge Bank site — **NorthBridge Assist** (help-desk bot) |
+| http://localhost:9000 | LuxeThread site — **LuxeThread Stylist** (sales bot) |
+| http://localhost:3000 | Dashboard (login: `demo@chatapi.dev` / `demo1234`) |
+| http://localhost:8000 | FastAPI backend (`/health`, `/docs`) |
+
+Banking is on `:8080` because `:8000` is the API. Each site is a standalone
+page in `demos/` with the widget embedded; the bot knowledge lives in
+`demos/knowledge/`. The seed is idempotent:
+
+```bash
+./dev.sh                    # seed if needed, then start all services
+./dev.sh --force-seed       # re-ingest all demo knowledge, then start
+./dev.sh --no-seed          # start services only
+backend/.venv/bin/python backend/seed_demo.py   # seed without starting services
+```
+
+Chat uses a working free OpenRouter model by default
+(`nvidia/nemotron-3-ultra-550b-a55b:free`) and automatically retries and falls
+back through other free models on rate limits. If every model is unavailable,
+replies degrade to a grounded knowledge-base answer so the demo keeps working.
+Tune with `OPENROUTER_CHAT_MODEL`, `OPENROUTER_FALLBACK_MODELS` and
+`OPENROUTER_RETRIES`.
 
 ## How knowledge is indexed
 

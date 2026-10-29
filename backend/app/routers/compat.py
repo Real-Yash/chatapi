@@ -8,6 +8,7 @@ Frontend contract (frontend/lib/api.ts):
   GET /public/agents/{slug}, POST /chat/{slug}, POST /agents/{id}/chat (playground)
 Widget: GET /api/agents/{slug} (brand color)
 """
+
 import json
 import os
 import uuid
@@ -72,7 +73,12 @@ def me_alias(user: models.User = Depends(get_current_user)):
 
 # --- Agent PATCH alias ---
 @router.patch("/agents/{agent_id}")
-def patch_agent(agent_id: str, body: schemas.AgentUpdate, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def patch_agent(
+    agent_id: str,
+    body: schemas.AgentUpdate,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     a = get_owned_agent(db, user.id, agent_id)
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(a, k, v)
@@ -85,12 +91,19 @@ def patch_agent(agent_id: str, body: schemas.AgentUpdate, user: models.User = De
 @router.get("/agents/{agent_id}/knowledge")
 def list_knowledge(agent_id: str, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     get_owned_agent(db, user.id, agent_id)
-    docs = db.query(models.Document).filter(models.Document.agent_id == agent_id).order_by(models.Document.created_at.desc()).all()
+    docs = (
+        db.query(models.Document)
+        .filter(models.Document.agent_id == agent_id)
+        .order_by(models.Document.created_at.desc())
+        .all()
+    )
     return [_doc_to_knowledge(d) for d in docs]
 
 
 @router.post("/agents/{agent_id}/knowledge/text")
-def add_knowledge_text(agent_id: str, body: dict, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def add_knowledge_text(
+    agent_id: str, body: dict, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
+):
     get_owned_agent(db, user.id, agent_id)
     text = (body.get("content") or body.get("text") or "").strip()
     title = body.get("title") or "manual"
@@ -111,8 +124,14 @@ def add_knowledge_text(agent_id: str, body: dict, user: models.User = Depends(ge
 
 
 @router.post("/agents/{agent_id}/knowledge/file")
-async def add_knowledge_file(agent_id: str, file: UploadFile = File(...), user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def add_knowledge_file(
+    agent_id: str,
+    file: UploadFile = File(...),
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     from app.ingest import extract_text_from_file
+
     get_owned_agent(db, user.id, agent_id)
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in ALLOWED_EXTS:
@@ -123,7 +142,9 @@ async def add_knowledge_file(agent_id: str, file: UploadFile = File(...), user: 
     data = await file.read()
     with open(dest, "wb") as f:
         f.write(data)
-    doc = models.Document(agent_id=agent_id, type="upload", filename=file.filename or safe, source_url=dest, status="processing")
+    doc = models.Document(
+        agent_id=agent_id, type="upload", filename=file.filename or safe, source_url=dest, status="processing"
+    )
     db.add(doc)
     db.commit()
     db.refresh(doc)
@@ -138,9 +159,12 @@ async def add_knowledge_file(agent_id: str, file: UploadFile = File(...), user: 
 
 
 @router.post("/agents/{agent_id}/knowledge/url")
-def add_knowledge_url(agent_id: str, body: dict, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def add_knowledge_url(
+    agent_id: str, body: dict, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
+):
     from app.routers.documents import _store_chunks as _sc
     from app.scraper import scrape_site
+
     agent = get_owned_agent(db, user.id, agent_id)
     url = (body.get("url") or "").strip()
     if not url:
@@ -156,7 +180,9 @@ def add_knowledge_url(agent_id: str, body: dict, user: models.User = Depends(get
         raise HTTPException(status_code=400, detail="No pages scraped")
     out = []
     for p in pages:
-        doc = models.Document(agent_id=agent_id, type="scrape", filename=(p["url"] or "")[:255], source_url=p["url"], status="processing")
+        doc = models.Document(
+            agent_id=agent_id, type="scrape", filename=(p["url"] or "")[:255], source_url=p["url"], status="processing"
+        )
         db.add(doc)
         db.commit()
         db.refresh(doc)
@@ -172,7 +198,9 @@ def add_knowledge_url(agent_id: str, body: dict, user: models.User = Depends(get
 
 
 @router.delete("/agents/{agent_id}/knowledge/{kid}")
-def delete_knowledge(agent_id: str, kid: str, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def delete_knowledge(
+    agent_id: str, kid: str, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
+):
     get_owned_agent(db, user.id, agent_id)
     doc = db.query(models.Document).filter(models.Document.id == kid, models.Document.agent_id == agent_id).first()
     if not doc:
@@ -202,9 +230,12 @@ def widget_agent(slug: str, db: Session = Depends(get_db)):
 
 # --- Playground chat by agent id (authed) ---
 @router.post("/agents/{agent_id}/chat")
-async def playground_chat(agent_id: str, body: schemas.ChatIn, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def playground_chat(
+    agent_id: str, body: schemas.ChatIn, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
+):
     from app.db import OPENROUTER_API_KEY
-    from app.rag import build_system_prompt, chunk_source, retrieve, stream_openrouter
+    from app.rag import build_system_prompt, chunk_source, fallback_answer, retrieve, stream_openrouter
+
     a = get_owned_agent(db, user.id, agent_id)
     business = db.query(models.Business).filter(models.Business.id == a.business_id).first()
     bname = business.name if business else "the business"
@@ -216,13 +247,18 @@ async def playground_chat(agent_id: str, body: schemas.ChatIn, user: models.User
     db.add(models.Message(conversation_id=conv.id, role="user", content=body.message, sources=sources))
     db.commit()
     if not OPENROUTER_API_KEY:
-        echo = "\n\n---\n\n".join((c.content or "")[:1000] for c in chunks) if chunks else "No relevant content found yet. Add knowledge first."
+        echo = (
+            "\n\n---\n\n".join((c.content or "")[:1000] for c in chunks)
+            if chunks
+            else "No relevant content found yet. Add knowledge first."
+        )
         db.add(models.Message(conversation_id=conv.id, role="assistant", content=echo, sources=sources))
         db.commit()
 
         async def fb():
             yield f"data: {json.dumps({'token': echo, 'content': echo, 'citations': sources, 'sources': sources, 'done': True})}\n\n"
             yield "data: [DONE]\n\n"
+
         return StreamingResponse(fb(), media_type="text/event-stream")
 
     async def gen():
@@ -231,11 +267,13 @@ async def playground_chat(agent_id: str, body: schemas.ChatIn, user: models.User
             async for delta in stream_openrouter(a.model, a.temperature, system, hist, body.message):
                 full += delta
                 yield f"data: {json.dumps({'token': delta, 'content': delta, 'citations': sources, 'sources': sources, 'done': False})}\n\n"
-        except Exception as e:
-            full += f"\n[upstream error: {e}]"
-            yield f"data: {json.dumps({'token': full, 'content': full, 'citations': sources, 'sources': sources, 'done': False})}\n\n"
+        except Exception:  # noqa: BLE001
+            err = fallback_answer(a, chunks, body.message)
+            full += err
+            yield f"data: {json.dumps({'token': err, 'content': err, 'citations': sources, 'sources': sources, 'done': False})}\n\n"
         db.add(models.Message(conversation_id=conv.id, role="assistant", content=full, sources=sources))
         db.commit()
         yield f"data: {json.dumps({'token': '', 'content': '', 'citations': sources, 'sources': sources, 'done': True})}\n\n"
         yield "data: [DONE]\n\n"
+
     return StreamingResponse(gen(), media_type="text/event-stream")

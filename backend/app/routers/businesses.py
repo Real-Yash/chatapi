@@ -10,11 +10,18 @@ router = APIRouter(prefix="/businesses", tags=["businesses"])
 
 @router.get("", response_model=list[schemas.BusinessOut])
 def list_businesses(user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return db.query(models.Business).filter(models.Business.owner_id == user.id).order_by(models.Business.created_at.desc()).all()
+    return (
+        db.query(models.Business)
+        .filter(models.Business.owner_id == user.id)
+        .order_by(models.Business.created_at.desc())
+        .all()
+    )
 
 
 @router.post("", response_model=schemas.BusinessOut)
-def create_business(body: schemas.BusinessIn, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def create_business(
+    body: schemas.BusinessIn, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
+):
     b = models.Business(owner_id=user.id, name=body.name.strip())
     db.add(b)
     db.commit()
@@ -27,13 +34,20 @@ def get_business(business_id: str, user: models.User = Depends(get_current_user)
     b = db.query(models.Business).filter(models.Business.id == business_id, models.Business.owner_id == user.id).first()
     if not b:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404, detail="Business not found")
     return b
 
 
 @router.put("/{business_id}", response_model=schemas.BusinessOut)
-def update_business(business_id: str, body: schemas.BusinessIn, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def update_business(
+    business_id: str,
+    body: schemas.BusinessIn,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     from fastapi import HTTPException
+
     b = db.query(models.Business).filter(models.Business.id == business_id, models.Business.owner_id == user.id).first()
     if not b:
         raise HTTPException(status_code=404, detail="Business not found")
@@ -46,6 +60,7 @@ def update_business(business_id: str, body: schemas.BusinessIn, user: models.Use
 @router.delete("/{business_id}")
 def delete_business(business_id: str, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     from fastapi import HTTPException
+
     b = db.query(models.Business).filter(models.Business.id == business_id, models.Business.owner_id == user.id).first()
     if not b:
         raise HTTPException(status_code=404, detail="Business not found")
